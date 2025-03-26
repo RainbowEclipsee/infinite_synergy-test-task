@@ -17,6 +17,7 @@
 ## Используемый стек
 - React
 - Redux Toolkit
+- Vite
 - Node.js
 - Express
 
