@@ -1,50 +1,98 @@
-import express from "express";
-import cors from "cors";
-import { faker } from "@faker-js/faker";
-import fs from "fs";
+import express from 'express'
+import cors from 'cors'
+import { faker } from '@faker-js/faker'
+import fs from 'fs/promises'
+import path from 'path'
 
-const app = express();
-const PORT = 5000;
+const app = express()
+const PORT = 5000
+const FILE_PATH = path.resolve('./users.json')
 
-app.use(cors());
-app.use(express.json());
+app.use(cors()) //Разрешаем кросс-доменные запросы
+app.use(express.json())
 
-const FILE_PATH = "./users.json";
-
-// Функция генерации пользователей
+//Гененируем пользователей
 const generateUsers = (count) => {
   return Array.from({ length: count }, () => ({
-    id: faker.string.uuid(), // Уникальный ID
+    id: faker.string.uuid(),
     name: faker.person.fullName(),
     department: faker.commerce.department(),
     company: faker.company.name(),
     jobTitle: faker.person.jobTitle(),
-  }));
-};
+  }))
+}
 
-// Если файл отсутствует — создаем с 1M пользователей
-if (!fs.existsSync(FILE_PATH)) {
-  const users = generateUsers(1_000_000);
-  fs.writeFileSync(FILE_PATH, JSON.stringify(users, null, 2));
-  console.log("JSON-файл с пользователями создан!");
+// Инициализация JSON-файла с пользователями, если его нет
+const initUsersFile = async () => {
+  try {
+    await fs.access(FILE_PATH)
+  } catch {
+    console.log('Создание JSON-файла с пользователями. Пожалуйста, подождите.')
+    const users = generateUsers(1_000_000)
+    await fs.writeFile(FILE_PATH, JSON.stringify(users, null, 2))
+    console.log('JSON-файл с пользователями создан!')
+  }
 }
 
 // Читаем пользователей из файла
-const getUsersFromFile = () => {
-  const data = fs.readFileSync(FILE_PATH);
-  return JSON.parse(data);
-};
+const getUsersFromFile = async () => {
+  try {
+    const data = await fs.readFile(FILE_PATH, 'utf-8')
+    return JSON.parse(data)
+  } catch (error) {
+    console.error('Ошибка чтения файла:', error)
+    return []
+  }
+}
 
-// Эндпоинт для получения пользователей (пагинация)
-app.get("/users", (req, res) => {
-  const { page = 1, limit = 50 } = req.query;
-  const users = getUsersFromFile();
-  const start = (page - 1) * limit;
-  const paginatedUsers = users.slice(start, start + Number(limit));
+// Сохранение списка пользователей в файл
+const saveUsersToFile = async (users) => {
+  try {
+    await fs.writeFile(FILE_PATH, JSON.stringify(users, null, 2))
+  } catch (error) {
+    console.error('Ошибка записи файла:', error)
+  }
+}
 
-  res.json(paginatedUsers);
-});
+// Маршрут для получения списка пользователей с пагинацией
+app.get('/users', async (req, res) => {
+  try {
+    let { page = 1, limit = 50 } = req.query
+    page = Math.max(1, parseInt(page, 10))
+    limit = Math.max(1, parseInt(limit, 10))
 
-app.listen(PORT, () => {
-  console.log(`Сервер запущен на http://localhost:${PORT}`);
-});
+    const users = await getUsersFromFile()
+    const start = (page - 1) * limit
+    const paginatedUsers = users.slice(start, start + limit)
+
+    res.json({ totalUsers: users.length, users: paginatedUsers })
+  } catch (error) {
+    res.status(500).json({ message: 'Ошибка сервера' })
+  }
+})
+
+// Маршрут для обновления информации о пользователе
+app.put('/users/:id', async (req, res) => {
+  try {
+    const users = await getUsersFromFile()
+    const { id } = req.params
+    const updatedUser = req.body
+
+    const index = users.findIndex((user) => user.id === id)
+    if (index === -1) {
+      return res.status(404).json({ message: 'Пользователь не найден' })
+    }
+
+    users[index] = { ...users[index], ...updatedUser }
+    await saveUsersToFile(users)
+
+    res.json(users[index])
+  } catch (error) {
+    res.status(500).json({ message: 'Ошибка обновления пользователя' })
+  }
+})
+
+app.listen(PORT, async () => {
+  await initUsersFile()
+  console.log(`Сервер запущен на http://localhost:${PORT}`)
+})
